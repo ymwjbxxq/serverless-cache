@@ -1,0 +1,34 @@
+[package]
+name = "serverless-cache"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "get-cache"
+path = "src/bin/get-cache.rs"
+
+[[bin]]
+name = "set-cache"
+path = "src/bin/set-cache.rs"
+
+[[bin]]
+name = "origin"
+path = "src/bin/origin.rs"
+
+[dependencies]
+aws_lambda_events = "0.6.1"
+aws-config = "0.9.0"
+aws-sdk-dynamodb = "0.9.0"
+aws-types = "0.9.0"
+chrono = "0.4.19"
+lambda_http = "0.5.0"
+lambda_runtime = "0.5.0"
+serde = {version = "1.0", features = ["derive"] }
+serde_json = "1.0.68"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1.51"
+tracing-subscriber = "0.3"
+futures = "0.3.17"
+reqwest = { version = "0.11.10", default-features = false, features = ["rustls-tls", "json"] }
+rand = "0.8.5"

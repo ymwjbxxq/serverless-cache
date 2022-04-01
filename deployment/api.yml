@@ -1,0 +1,180 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+##########################################################################
+#  Parameters                                                            #
+##########################################################################
+Parameters:
+  TableName:
+    Type: String
+  DistributionDomainName:
+    Type: String
+    Default: TODO #required custom domain to work. Once CloudFront is deployed update this value on Lambda console
+
+##########################################################################
+#  Global values that are applied to all resources                       #
+##########################################################################
+Globals:
+  Function:
+    MemorySize: 1024
+    Architectures: ["arm64"]
+    Handler: bootstrap
+    Runtime: provided.al2
+    Timeout: 29
+    Layers:
+      - !Sub arn:aws:lambda:${AWS::Region}:580247275435:layer:LambdaInsightsExtension-Arm64:1
+    Environment:
+      Variables:
+        RUST_BACKTRACE: 1
+        RUST_LOG: info
+
+Resources:
+##########################################################################
+#   SQS                                                                  #
+##########################################################################
+  CacheDeadSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      Tags:
+        - Key: mame
+          Value: !Ref AWS::StackName
+
+  CacheSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CacheDeadSqsQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: mame
+          Value: !Ref AWS::StackName
+
+##########################################################################
+#   Roles                                                               #
+##########################################################################
+  MyHttpApiRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - apigateway.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: AllowSqsIntegration
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'sqs:SendMessage'
+                - 'sqs:GetQueueUrl'
+                - 'sqs:SendMessageBatch'
+              Resource: !GetAtt CacheSqsQueue.Arn
+            - Effect: Allow
+              Action:
+                - 'logs:CreateLogGroup'
+                - 'logs:CreateLogStream'
+                - 'logs:DescribeLogGroups'
+                - 'logs:DescribeLogStreams'
+                - 'logs:PutLogEvents'
+                - 'logs:GetLogEvents'
+                - 'logs:FilterLogEvents'
+              Resource: !GetAtt AccessLogs.Arn
+
+##########################################################################
+#  API Gateway HTTP API                                                  #
+# ##########################################################################
+  AccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 1
+      LogGroupName: !Sub "/api-gateway/${AWS::StackName}/APIAccessLogs-rust"
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      AccessLogSettings:
+        DestinationArn: !GetAtt AccessLogs.Arn
+        Format: '{ "requestId":"$context.requestId", "ip": "$context.identity.sourceIp", "requestTime":"$context.requestTime", "httpMethod":"$context.httpMethod","routeKey":"$context.routeKey", "status":"$context.status","protocol":"$context.protocol", "responseLength":"$context.responseLength" }'
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          - POST
+      DefinitionBody:
+        'Fn::Transform':
+          Name: 'AWS::Include'
+          Parameters:
+            Location: 'api-to-sqs-integration.yml'
+      Tags:
+        name: !Ref AWS::StackName
+
+##########################################################################
+#   Lambda Function                                                      #
+##########################################################################
+  GetCacheFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../build/get-cache
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: 
+                - dynamodb:GetItem
+              Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableName
+      Events:
+        getcache:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /cache
+            Method: GET
+      Tags:
+        name: !Ref AWS::StackName
+        service: serverless-cache
+
+  SetCacheFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../build/set-cache
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: 
+                - dynamodb:UpdateItem
+              Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableName
+          DISTRIBUTION_CUSTOM_DOMAIN_NAME: !Ref DistributionDomainName
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt CacheSqsQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+      Tags:
+        name: !Ref AWS::StackName
+        service: serverless-cache
+
+Outputs:
+  HttpApiEndpoint:
+    Description: The cache endpoint
+    Value: !GetAtt HttpApi.ApiEndpoint

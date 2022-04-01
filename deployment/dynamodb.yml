@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: 'AWS::Serverless-2016-10-31'
+Description: DynamoDb.
+
+Resources:
+##########################################################################
+#  DynamoDB                                                              #
+##########################################################################
+  CacheTable:
+    Type: AWS::DynamoDB::GlobalTable
+    Properties:
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      TimeToLiveSpecification:
+        AttributeName: ttl_expire_at
+        Enabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Replicas:
+        - Region: eu-central-1
+          Tags:
+            - Key: name
+              Value: !Ref AWS::StackName
+            - Key: service
+              Value: serverless-cache
+            - Key: region
+              Value: eu-central-1
+        - Region: eu-west-1
+          Tags:
+            - Key: name
+              Value: !Ref AWS::StackName
+            - Key: service
+              Value: serverless-cache
+            - Key: region
+              Value: eu-west-1
+      BillingMode: PAY_PER_REQUEST
+
+Outputs:
+  CacheTableName:
+    Description: "Cache Table Name"
+    Value: !Ref CacheTable
+    Export:
+      Name: CacheTableName
+  CacheTableArn:
+    Description: "Cache Table ARN"
+    Value: !GetAtt CacheTable.Arn
+    Export:
+      Name: CacheTableArn

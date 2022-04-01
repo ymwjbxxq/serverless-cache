@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+##########################################################################
+#  Parameters                                                            #
+##########################################################################
+Parameters:
+  ApiPrimaryEndpoint:
+    Type: String
+  ApiSecondaryEndpoint:
+    Type: String
+
+Resources:
+##########################################################################
+#  CloudFront::CachePolicy                                               #
+##########################################################################
+  1hCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Comment: Cache for 1h
+        Name: !Ref AWS::StackName
+        MinTTL: 1
+        MaxTTL: 3600
+        DefaultTTL: 30
+        Name: 1h
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: none
+          EnableAcceptEncodingBrotli: false
+          EnableAcceptEncodingGzip: false
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: whitelist
+            QueryStrings:
+              - key #If you want to send values to the origin but not include them in the cache key, use OriginRequestPolicy.
+
+  OriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Ref AWS::StackName
+        CookiesConfig:
+          CookieBehavior: none
+        HeadersConfig:
+          HeaderBehavior: none
+        QueryStringsConfig:
+          QueryStringBehavior: whitelist
+          QueryStrings:
+            - origin_url
+
+##########################################################################
+#  CloudFront::Function                                                  #
+##########################################################################
+  CacheFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "${AWS::StackName}-cache"
+      AutoPublish: true
+      FunctionCode: !Sub |
+        function handler(event) {
+            var response = event.response;
+            response.headers['date'] = {
+              value: new Date().toUTCString()
+            };
+            delete response.headers['age'];
+            return response;
+        }
+      FunctionConfig:
+        Comment: Set cache
+        Runtime: cloudfront-js-1.0
+
+##########################################################################
+#  CloudFront::Distribution                                              #
+##########################################################################
+  CloudfrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        #  CNAMEs: # Aliases A complex type that contains information about CNAMEs (alternate domain names), if any, for this distribution.
+        PriceClass: PriceClass_100
+        IPV6Enabled: true
+        HttpVersion: http2
+        OriginGroups: #https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html
+          Items:
+            - Id: Failover
+              FailoverCriteria: 
+                StatusCodes: #403, 404, 500, 502, 503, 504
+                  Items:
+                    - 502 # Bad Gateway Exception
+                    - 503 # Service Unavailable Exception
+                    - 504 # Endpoint Request Timed-out Exception
+                  Quantity: 3
+              Members: 
+                Items: 
+                  - OriginId: Germany
+                  - OriginId: Ireland
+                Quantity: 2
+          Quantity: 1
+        Origins:
+          - Id: Germany
+            DomainName: !Ref ApiPrimaryEndpoint
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: 
+                - TLSv1.2
+          - Id: Ireland
+            DomainName: !Ref ApiSecondaryEndpoint
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: 
+                - TLSv1.2
+        Enabled: true
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          TargetOriginId: Failover
+          ViewerProtocolPolicy: https-only
+          # "Managed-CachingDisabled" from https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
+          CachePolicyId: !Ref 1hCachePolicy
+          OriginRequestPolicyId: !Ref OriginRequestPolicy
+          FunctionAssociations:
+            - EventType: viewer-response
+              FunctionARN: !GetAtt CacheFunction.FunctionMetadata.FunctionARN
+      Tags: 
+        - Key: Name
+          Value: serverless-cache
+
+Outputs:
+  DistributionDomainName:
+    Description: "Distribution domain name"
+    Value: !GetAtt CloudfrontDistribution.DomainName
+    Export:
+      Name: DistributionDomainName

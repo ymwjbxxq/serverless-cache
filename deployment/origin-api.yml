@@ -1,0 +1,81 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+##########################################################################
+#  Parameters                                                            #
+##########################################################################
+Parameters:
+  CacheEndpoint: #This will be a fix custom domain set on route3 like https://mydomain/set-cache where I can setup latency routing for example
+    Type: String
+
+##########################################################################
+#  Global values that are applied to all resources                       #
+##########################################################################
+Globals:
+  Function:
+    MemorySize: 1024
+    Architectures: ["arm64"]
+    Handler: bootstrap
+    Runtime: provided.al2
+    Timeout: 29
+    Layers:
+      - !Sub arn:aws:lambda:${AWS::Region}:580247275435:layer:LambdaInsightsExtension-Arm64:1
+    Environment:
+      Variables:
+        RUST_BACKTRACE: 1
+        RUST_LOG: info
+
+Resources:
+##########################################################################
+#  API Gateway HTTP API                                                  #
+# ##########################################################################
+  AccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 1
+      LogGroupName: !Sub "/api-gateway/${AWS::StackName}/origin-api"
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      AccessLogSettings:
+        DestinationArn: !GetAtt AccessLogs.Arn
+        Format: '{ "requestId":"$context.requestId", "ip": "$context.identity.sourceIp", "requestTime":"$context.requestTime", "httpMethod":"$context.httpMethod","routeKey":"$context.routeKey", "status":"$context.status","protocol":"$context.protocol", "responseLength":"$context.responseLength" }'
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          - POST
+      Tags:
+        name: !Ref AWS::StackName
+
+##########################################################################
+#   Lambda Function                                                      #
+##########################################################################
+  OriginFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../build/origin
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          CACHE_ENDPOINT: !Sub https://${CacheEndpoint}/set-cache
+      Events:
+        origin:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /origin
+            Method: GET
+      Tags:
+        name: !Ref AWS::StackName
+        service: serverless-cache
+
+Outputs:
+  HttpApiEndpoint:
+    Description: Origin endpoint
+    Value: !GetAtt HttpApi.ApiEndpoint
