@@ -86,7 +86,7 @@ Response:
 
 Once the application is deployed, retrieve the CloudFront value from CloudFormation Outputs. Then, either browse to the endpoint in a web browser or call the endpoint from Postman.
 
-https://{DistributionDomainName}/cache?key=myKey&origin_url=https://{OriginDomain}/origin?key=nitesh
+https://{DistributionDomainName}/cache?key=myKey&origin_url=https://{OriginDomain}/origin?key=myKey
 
 If you check the headers back from the call, you will see:
 
