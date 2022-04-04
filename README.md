@@ -7,7 +7,7 @@ Necessary: this application uses various AWS services, and there are costs assoc
 
 ## How it works
 
-Please read this article []()
+Please read this article [Serverless Cache](https://dfrasca.hashnode.dev/serverless-cache)
 
 ## Requirements
 
